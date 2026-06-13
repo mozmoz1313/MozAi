@@ -25,9 +25,78 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev build-essential ccache
 
-    - name: Python dependencies
+    - name: Python dependencies training
       run: |
         pip install --upgrade pip
+        pip install torch==2.2.0+cpu --index-url https://download.pytorch.org/whl/cpu
+        pip install numpy yfinance requests onnx onnxruntime
+
+    - name: Train model and export ONNX
+      run: |
+        python3 - << 'PYEOF'
+import sys
+sys.path.insert(0, '.')
+import torch
+import numpy as np
+import yfinance as yf
+from brain import TradingLSTM, build_features, build_sequences, MODEL_PATH, SEQ_LEN, INPUT_SIZE
+
+ONNX_PATH = "trading_model.onnx"
+print("Telechargement XAUUSD...")
+data = yf.download(tickers="GC=F", period="7d", interval="1m", progress=False)
+data.dropna(inplace=True)
+features, close, atr = build_features(data)
+X, y = build_sequences(features, close, atr)
+split = int(len(X) * 0.8)
+X_train = torch.tensor(X[:split])
+y_train = torch.tensor(y[:split])
+X_val = torch.tensor(X[split:])
+y_val = torch.tensor(y[split:])
+model = TradingLSTM()
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+criterion = torch.nn.CrossEntropyLoss()
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100)
+best_loss = 9999
+no_improve = 0
+model.train()
+for epoch in range(100):
+    optimizer.zero_grad()
+    dec, conf, vp, sent = model(X_train)
+    loss = criterion(dec, y_train)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    optimizer.step()
+    scheduler.step()
+    if (epoch + 1) % 10 == 0:
+        model.eval()
+        with torch.no_grad():
+            v_dec, _, _, _ = model(X_val)
+            v_loss = criterion(v_dec, y_val).item()
+            acc = (v_dec.argmax(1) == y_val).float().mean().item()
+        model.train()
+        print(f"Epoch {epoch+1} | Loss: {loss.item():.4f} | Val: {v_loss:.4f} | Acc: {acc*100:.1f}%")
+        if v_loss < best_loss:
+            best_loss = v_loss
+            no_improve = 0
+            torch.save(model.state_dict(), MODEL_PATH)
+        else:
+            no_improve += 1
+            if no_improve >= 15:
+                print("Early stopping")
+                break
+model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
+model.eval()
+dummy = torch.zeros(1, SEQ_LEN, INPUT_SIZE)
+torch.onnx.export(model, dummy, ONNX_PATH,
+    input_names=["input"],
+    output_names=["decision","confidence","volatility","sentiment"],
+    dynamic_axes={"input": {0: "batch"}},
+    opset_version=17)
+print("Modele ONNX exporte OK")
+PYEOF
+
+    - name: Python dependencies buildozer
+      run: |
         pip install buildozer cython==0.29.37 virtualenv
 
     - name: Setup Android SDK
@@ -51,6 +120,8 @@ jobs:
       run: |
         sed -i "s|#android.sdk_path =|android.sdk_path = /home/runner/android-sdk|" buildozer.spec
         sed -i "s|#android.ndk_path =|android.ndk_path = /home/runner/android-sdk/ndk/25.2.9519653|" buildozer.spec
+        sed -i "s/torch,/onnxruntime,/" buildozer.spec
+        sed -i "s|source.include_exts = .*|source.include_exts = py,png,jpg,kv,atlas,json,pth,onnx|" buildozer.spec
 
     - name: Build APK
       run: buildozer android debug 2>&1 | tee build.log

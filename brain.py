@@ -534,3 +534,34 @@ def train_bot(epochs=300, update_callback=None):
         update_callback(
             f"✅ Entraînement terminé\n"
             f[colle le contenu complet ici]
+
+# ============================================================
+#  EXPORT ONNX — pour Android
+# ============================================================
+ONNX_PATH = "trading_model.onnx"
+
+def export_onnx(model):
+    model.eval()
+    dummy = torch.zeros(1, SEQ_LEN, INPUT_SIZE)
+    torch.onnx.export(
+        model, dummy, ONNX_PATH,
+        input_names=["input"],
+        output_names=["decision", "confidence", "volatility", "sentiment"],
+        dynamic_axes={"input": {0: "batch"}},
+        opset_version=17
+    )
+    return ONNX_PATH
+
+# ============================================================
+#  INFERENCE ONNX — Android (onnxruntime)
+# ============================================================
+def predict_onnx(features_seq):
+    import onnxruntime as ort
+    sess = ort.InferenceSession(ONNX_PATH)
+    x = features_seq.astype(np.float32)[np.newaxis]
+    dec, conf, vol, sent = sess.run(None, {"input": x})
+    signal_map = {0: "🔴 VENTE", 1: "⚪ NEUTRE", 2: "🟢 ACHAT"}
+    signal = signal_map[dec[0].argmax()]
+    confidence = float(conf[0][0]) * 100
+    return signal, confidence
+    export_onnx(model)
