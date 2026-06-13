@@ -14,7 +14,6 @@ android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
 android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
-android.gradle_dependencies = 'com.android.support:support-v4:28.0.0'
 android.enable_androidx = True
 log_level = 2
 warn_on_root = 1
