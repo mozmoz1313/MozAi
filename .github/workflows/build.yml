@@ -1,0 +1,92 @@
+name: MozAi APK Builder
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        df -h
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git zip unzip \
+          openjdk-17-jdk \
+          autoconf libtool pkg-config \
+          zlib1g-dev libncurses5-dev \
+          libncursesw5-dev libtinfo5 \
+          cmake libffi-dev libssl-dev \
+          build-essential ccache
+
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install buildozer cython==0.29.37 virtualenv
+
+    - name: Setup Android SDK manually
+      run: |
+        export ANDROID_SDK_ROOT=/home/runner/android-sdk
+        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        unzip -q commandlinetools-linux-9477386_latest.zip -d $ANDROID_SDK_ROOT/cmdline-tools/
+        mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest
+
+        mkdir -p $ANDROID_SDK_ROOT/tools/bin
+        ln -sf $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager $ANDROID_SDK_ROOT/tools/bin/sdkmanager
+        ln -sf $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager $ANDROID_SDK_ROOT/tools/bin/avdmanager
+
+        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        echo "ANDROID_HOME=$ANDROID_SDK_ROOT"     >> $GITHUB_ENV
+
+        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
+        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+          "platform-tools" \
+          "platforms;android-34" \
+          "build-tools;34.0.0" \
+          "ndk;25.2.9519653"
+
+    - name: Patch buildozer.spec SDK path
+      run: |
+        sed -i "s|#android.sdk_path =|android.sdk_path = /home/runner/android-sdk|" buildozer.spec
+        sed -i "s|#android.ndk_path =|android.ndk_path = /home/runner/android-sdk/ndk/25.2.9519653|" buildozer.spec
+        echo "ANDROIDSDK=/home/runner/android-sdk"               >> $GITHUB_ENV
+        echo "ANDROIDNDK=/home/runner/android-sdk/ndk/25.2.9519653" >> $GITHUB_ENV
+
+    - name: Build APK
+      run: |
+        cd $GITHUB_WORKSPACE
+        buildozer android debug 2>&1 | tee build.log
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: MozAi-APK
+        path: bin/*.apk
+
+    - name: Upload log si échec
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log

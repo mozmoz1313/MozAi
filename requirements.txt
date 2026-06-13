@@ -1,0 +1,6 @@
+torch
+numpy
+yfinance
+requests
+kivy==2.3.0
+certifi

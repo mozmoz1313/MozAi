@@ -1,0 +1,8 @@
+.buildozer/
+bin/
+__pycache__/
+*.pyc
+trading_model.pth
+mozai_memory.json
+trade_history.json
+*.log
